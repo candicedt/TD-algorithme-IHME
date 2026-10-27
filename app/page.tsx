@@ -1,69 +1,130 @@
 
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
-const machines = [
-  { id: 1, name: "Machine de traction", location: "Laboratoire mécanique" },
-  { id: 2, name: "Banc de flexion", location: "Laboratoire essais" },
-  { id: 3, name: "Machine d'impact", location: "Laboratoire matériaux" },
-];
+type Machine = {
+  id: number;
+  name: string;
+  description: string | null;
+};
 
-const initialReservations = [
-  {
-    id: 1,
-    machineId: 1,
-    date: "2026-10-26",
-    start: "10:00",
-    end: "11:00",
-    user: "Utilisateur démo",
-  },
-];
+type Reservation = {
+  id: number | string;
+  machineId: number | string;
+  machineName: string;
+  reservedBy: string;
+  date: string;
+  start: string;
+  end: string;
+};
+
 
 export default function Home() {
-  const [reservations, setReservations] = useState(initialReservations);
+
+
+const [machines, setMachines] = useState<Machine[]>([]);
+const [loadingMachines, setLoadingMachines] = useState(true);
+const [reservedBy, setReservedBy] = useState("");
+
+useEffect(() => {
+  async function fetchMachines() {
+    try {
+      console.log("Début du chargement des machines");
+
+const response = await fetch("/api/machines");
+console.log("Réponse API :", response.status);
+
+if (!response.ok) {
+  throw new Error("Impossible de récupérer les machines.");
+}
+
+const data: Machine[] = await response.json();
+console.log("Machines reçues :", data);
+
+setMachines(
+  data.map((machine) => ({
+    ...machine,
+    id: Number(machine.id),
+  }))
+);
+    } catch (error) {
+      console.error("Erreur lors du chargement des machines :", error);
+    } finally {
+      setLoadingMachines(false);
+    }
+  }
+
+  fetchMachines();
+}, []);
+
+useEffect(() => {
+  async function fetchReservations() {
+    try {
+      const response = await fetch("/api/reservations");
+
+      if (!response.ok) {
+        throw new Error("Impossible de récupérer les réservations.");
+      }
+
+      const data: Reservation[] = await response.json();
+      setReservations(data);
+    } catch (error) {
+      console.error("Erreur lors du chargement des réservations :", error);
+    }
+  }
+
+  fetchReservations();
+}, []);
+
+const [reservations, setReservations] = useState<Reservation[]>([]);
   const [machineId, setMachineId] = useState("1");
   const [date, setDate] = useState("2026-10-26");
   const [start, setStart] = useState("09:00");
   const [end, setEnd] = useState("10:00");
   const [message, setMessage] = useState("");
 
-  function bookMachine(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setMessage("");
+async function bookMachine(event: React.FormEvent<HTMLFormElement>) {
+  event.preventDefault();
+  setMessage("");
 
-    if (start >= end) {
-      setMessage("L'heure de fin doit être après l'heure de début.");
-      return;
-    }
+  if (start >= end) {
+    setMessage("L'heure de fin doit être après l'heure de début.");
+    return;
+  }
 
-    const conflict = reservations.some(
-      (reservation) =>
-        reservation.machineId === Number(machineId) &&
-        reservation.date === date &&
-        start < reservation.end &&
-        end > reservation.start
-    );
-
-    if (conflict) {
-      setMessage("Ce créneau est déjà réservé pour cette machine.");
-      return;
-    }
-
-    setReservations([
-      ...reservations,
-      {
-        id: Date.now(),
+  try {
+    const response = await fetch("/api/reservations", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
         machineId: Number(machineId),
         date,
         start,
         end,
-        user: "Utilisateur démo",
-      },
-    ]);
+        reservedBy,
+      }),
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      setMessage(
+        data.error ?? "Impossible d'enregistrer la réservation."
+      );
+      return;
+    }
 
     setMessage("Réservation ajoutée avec succès !");
+    setReservedBy("");
+
+  } catch (error) {
+    console.error("Erreur lors de la réservation :", error);
+    setMessage("Impossible de contacter le serveur. Réessaie.");
   }
+}
 
   return (
     <main className="min-h-screen bg-slate-50 px-6 py-10 text-slate-900">
@@ -82,6 +143,11 @@ export default function Home() {
 
         <section className="mb-10">
           <h2 className="mb-4 text-xl font-semibold">Machines disponibles</h2>
+          {loadingMachines && (
+  <p className="mb-4 text-sm text-slate-500">
+    Chargement des machines...
+  </p>
+)}
           <div className="grid gap-4 md:grid-cols-3">
             {machines.map((machine) => (
               <article
@@ -98,7 +164,7 @@ export default function Home() {
                 </div>
                 <h3 className="font-semibold">{machine.name}</h3>
                 <p className="mt-2 text-sm text-slate-500">
-                  {machine.location}
+                  {machine.description ?? "Aucune description"}
                 </p>
                 <button
                   onClick={() => {
@@ -123,6 +189,19 @@ export default function Home() {
           <h2 className="mb-5 text-xl font-semibold">Nouvelle réservation</h2>
 
           <form onSubmit={bookMachine} className="grid gap-5 md:grid-cols-2">
+
+  <label className="grid gap-2 text-sm font-medium">
+    Nom du réservataire
+    <input
+      type="text"
+      required
+      value={reservedBy}
+      onChange={(e) => setReservedBy(e.target.value)}
+      placeholder="Prénom et nom"
+      className="rounded-lg border border-slate-300 p-3"
+    />
+  </label>
+
             <label className="grid gap-2 text-sm font-medium">
               Machine
               <select
@@ -202,32 +281,31 @@ export default function Home() {
               <thead className="bg-slate-100 text-slate-600">
                 <tr>
                   <th className="p-4">Machine</th>
+                  <th className="p-4">Réservé par</th>
                   <th className="p-4">Date</th>
                   <th className="p-4">Créneau</th>
                 </tr>
               </thead>
-              <tbody>
-                {reservations.map((reservation) => (
-                  <tr key={reservation.id} className="border-t border-slate-200">
-                    <td className="p-4">
-                      {machines.find(
-                        (machine) => machine.id === reservation.machineId
-                      )?.name}
-                    </td>
-                    <td className="p-4">{reservation.date}</td>
-                    <td className="p-4">
-                      {reservation.start} – {reservation.end}
-                    </td>
-                  </tr>
-                ))}
-                {reservations.length === 0 && (
-                  <tr>
-                    <td colSpan={3} className="p-4 text-slate-500">
-                      Aucune réservation pour le moment.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
+  <tbody>
+  {reservations.map((reservation) => (
+    <tr key={reservation.id} className="border-t border-slate-200">
+      <td className="p-4">{reservation.machineName}</td>
+      <td className="p-4">{reservation.reservedBy}</td>
+      <td className="p-4">{reservation.date}</td>
+      <td className="p-4">
+        {reservation.start} – {reservation.end}
+      </td>
+    </tr>
+  ))}
+
+  {reservations.length === 0 && (
+    <tr>
+      <td colSpan={4} className="p-4 text-slate-500">
+        Aucune réservation pour le moment.
+      </td>
+    </tr>
+  )}
+</tbody>
             </table>
           </div>
         </section>
