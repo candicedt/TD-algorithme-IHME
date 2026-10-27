@@ -30,7 +30,7 @@ function App() {
   const [message, setMessage] = useState("");
 
   async function fetchReservations() {
-    const response = await fetch("/api/reservations");
+    const response = await fetch(`${import.meta.env.BASE_URL}api/reservations`);
 
     if (!response.ok) {
       throw new Error("Impossible de récupérer les réservations.");
@@ -43,7 +43,7 @@ function App() {
   useEffect(() => {
     async function loadData() {
       try {
-        const response = await fetch("/api/machines");
+        const response = await fetch(`${import.meta.env.BASE_URL}api/machines`);
 
         if (!response.ok) {
           throw new Error("Impossible de récupérer les machines.");
@@ -88,7 +88,7 @@ function App() {
     }
 
     try {
-      const response = await fetch("/api/reservations", {
+      const response = await fetch(`${import.meta.env.BASE_URL}api/reservations`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
