@@ -35,19 +35,12 @@ app.use("/api/reservations", reservationsRouter);
 
 if (process.env.NODE_ENV === "production") {
   const frontendPath = path.resolve(process.cwd(), "../dist");
-  const basePath = "/td-algorithme-ihme";
 
-  // Sert les fichiers React sous le préfixe utilisé par le site de l'école.
-  app.use(basePath, express.static(frontendPath));
+  // Le serveur de l'école retire déjà le préfixe de l'URL.
+  app.use(express.static(frontendPath));
 
-  // Renvoie React pour les pages de l'application, mais pas pour les API
-  // ni pour les fichiers statiques qui n'existent pas.
   app.get("/{*path}", (req, res, next) => {
-    if (req.path.startsWith("/api/")) {
-      return next();
-    }
-
-    if (path.extname(req.path)) {
+    if (req.path.startsWith("/api/") || path.extname(req.path)) {
       return next();
     }
 
