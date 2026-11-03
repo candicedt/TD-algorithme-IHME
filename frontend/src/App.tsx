@@ -1,299 +1,77 @@
-
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import type { CSSProperties, FormEvent } from "react";
 import "./App.css";
 
-type Machine = {
-  id: number;
-  name: string;
-  description: string | null;
-};
-
-type Reservation = {
-  id: number | string;
-  machineId: number | string;
-  machineName: string;
-  reservedBy: string;
-  date: string;
-  start: string;
-  end: string;
-};
+type User = { id: number; username: string; displayName: string };
+type Machine = { id: number; name: string; description: string | null };
+type Reservation = { id: number | string; machineId: number | string; machineName: string; reservedBy: string; ownerUserId: number | null; ownerDisplayName: string | null; campaignName: string; sampleCount: number; date: string; start: string; end: string };
+type AuthMode = "login" | "register";
+type Draft = { machineId: string; date: string; start: string; end: string; campaignName: string; sampleCount: string };
+const API = `${import.meta.env.BASE_URL}api`;
+const HOURS = Array.from({ length: 14 }, (_, i) => i + 7);
+const MACHINE_IMAGES = [
+  "https://images.unsplash.com/photo-1581092160562-40aa08e78837?auto=format&fit=crop&w=900&q=80",
+  "https://images.unsplash.com/photo-1581092580497-e0d23cbdf1dc?auto=format&fit=crop&w=900&q=80",
+  "https://images.unsplash.com/photo-1581092334651-ddf26d9a09d0?auto=format&fit=crop&w=900&q=80",
+  "https://images.unsplash.com/photo-1581092918056-0c4c3a3b2a8a?auto=format&fit=crop&w=900&q=80",
+  "https://images.unsplash.com/photo-1581092160607-ee22621dd758?auto=format&fit=crop&w=900&q=80",
+  "https://images.unsplash.com/photo-1581092795360-fd1ca04f0952?auto=format&fit=crop&w=900&q=80",
+  "https://images.unsplash.com/photo-1581092160562-40aa08e78837?auto=format&fit=crop&w=900&q=80",
+];
+const COLORS = ["#2563eb", "#0f9f83", "#a855f7", "#e07827", "#db4777", "#6476d9", "#8b8f25"];
+function colorFor(value: string) { let hash = 0; for (let i = 0; i < value.length; i++) hash = (hash * 31 + value.charCodeAt(i)) | 0; return COLORS[Math.abs(hash) % COLORS.length]; }
+function localDate(date: Date) { const y = date.getFullYear(); const m = String(date.getMonth() + 1).padStart(2, "0"); const d = String(date.getDate()).padStart(2, "0"); return `${y}-${m}-${d}`; }
+function parseDate(value: string) { const [y, m, d] = value.split("-").map(Number); return new Date(y, m - 1, d, 12); }
+function addDays(value: string, amount: number) { const date = parseDate(value); date.setDate(date.getDate() + amount); return localDate(date); }
+function mondayOf(value: string) { const date = parseDate(value); const day = (date.getDay() + 6) % 7; date.setDate(date.getDate() - day); return localDate(date); }
+function prettyDate(value: string, options: Intl.DateTimeFormatOptions = { weekday: "long", day: "numeric", month: "long" }) { return parseDate(value).toLocaleDateString("fr-FR", options); }
+function toMinutes(time: string) { const [h, m] = time.split(":").map(Number); return h * 60 + m; }
+function emptyDraft(machineId = "", date = localDate(new Date())): Draft { return { machineId, date, start: "09:00", end: "10:00", campaignName: "", sampleCount: "1" }; }
 
 function App() {
-  const [machines, setMachines] = useState<Machine[]>([]);
-  const [reservations, setReservations] = useState<Reservation[]>([]);
-  const [loadingMachines, setLoadingMachines] = useState(true);
-  const [reservedBy, setReservedBy] = useState("");
-  const [machineId, setMachineId] = useState("");
-  const [date, setDate] = useState("2026-10-27");
-  const [start, setStart] = useState("09:00");
-  const [end, setEnd] = useState("10:00");
-  const [message, setMessage] = useState("");
+  const [user, setUser] = useState<User | null>(null);
+  const [authMode, setAuthMode] = useState<AuthMode>("login");
+  const [username, setUsername] = useState(""); const [displayName, setDisplayName] = useState(""); const [password, setPassword] = useState("");
+  const [authMessage, setAuthMessage] = useState(""); const [authLoading, setAuthLoading] = useState(false);
+  const [machines, setMachines] = useState<Machine[]>([]); const [reservations, setReservations] = useState<Reservation[]>([]);
+  const [loading, setLoading] = useState(true); const [message, setMessage] = useState("");
+  const [view, setView] = useState<"day" | "week">("week"); const [selectedDate, setSelectedDate] = useState(localDate(new Date()));
+  const [draft, setDraft] = useState<Draft>(emptyDraft()); const [editingId, setEditingId] = useState<string | number | null>(null); const [showForm, setShowForm] = useState(false);
+  const [detail, setDetail] = useState<Reservation | null>(null); const [saving, setSaving] = useState(false);
 
-  async function fetchReservations() {
-    const response = await fetch(`${import.meta.env.BASE_URL}api/reservations`);
+  const fetchReservations = useCallback(async () => { const response = await fetch(`${API}/reservations`, { credentials: "same-origin" }); if (!response.ok) throw new Error("Impossible de récupérer les réservations."); setReservations(await response.json()); }, []);
+  const fetchMachines = useCallback(async () => { const response = await fetch(`${API}/machines`); if (!response.ok) throw new Error("Impossible de récupérer les machines."); const data: Machine[] = await response.json(); setMachines(data.map((m) => ({ ...m, id: Number(m.id) }))); }, []);
+  useEffect(() => { (async () => { try { const response = await fetch(`${API}/auth/me`, { credentials: "same-origin" }); if (response.ok) { const data = await response.json(); setUser(data.user); } } catch { /* session absente */ } finally { setLoading(false); } })(); }, []);
+  useEffect(() => { (async () => { try { await Promise.all([fetchMachines(), fetchReservations()]); } catch (error) { setMessage(error instanceof Error ? error.message : "Erreur de chargement."); } })(); }, [fetchMachines, fetchReservations]);
 
-    if (!response.ok) {
-      throw new Error("Impossible de récupérer les réservations.");
-    }
+  async function authenticate(event: FormEvent) { event.preventDefault(); setAuthLoading(true); setAuthMessage(""); try { const response = await fetch(`${API}/auth/${authMode === "register" ? "register" : "login"}`, { method: "POST", headers: { "Content-Type": "application/json" }, credentials: "same-origin", body: JSON.stringify({ username, displayName, password }) }); const data = await response.json(); if (!response.ok) { setAuthMessage(data.error ?? "Connexion impossible."); return; } setUser(data.user); setPassword(""); setAuthMessage(""); } catch { setAuthMessage("Impossible de contacter le serveur."); } finally { setAuthLoading(false); } }
+  async function logout() { await fetch(`${API}/auth/logout`, { method: "POST", credentials: "same-origin" }); setUser(null); setDetail(null); setShowForm(false); }
+  function startCreate(machineId = machines[0] ? String(machines[0].id) : "", date = selectedDate) { setEditingId(null); setDraft(emptyDraft(machineId, date)); setShowForm(true); setMessage(""); document.getElementById("booking-form")?.scrollIntoView({ behavior: "smooth", block: "start" }); }
+  function startEdit(item: Reservation) { setEditingId(item.id); setDraft({ machineId: String(item.machineId), date: item.date, start: item.start, end: item.end, campaignName: item.campaignName, sampleCount: String(item.sampleCount) }); setShowForm(true); setDetail(null); document.getElementById("booking-form")?.scrollIntoView({ behavior: "smooth", block: "start" }); }
+  async function saveReservation(event: FormEvent) { event.preventDefault(); setSaving(true); setMessage(""); try { const response = await fetch(`${API}/reservations${editingId ? `/${editingId}` : ""}`, { method: editingId ? "PUT" : "POST", headers: { "Content-Type": "application/json" }, credentials: "same-origin", body: JSON.stringify({ ...draft, machineId: Number(draft.machineId), sampleCount: Number(draft.sampleCount) }) }); const data = await response.json(); if (!response.ok) { setMessage(data.error ?? "Enregistrement impossible."); return; } await fetchReservations(); setShowForm(false); setEditingId(null); setMessage(editingId ? "Réservation modifiée." : "Réservation créée."); } catch { setMessage("Impossible de contacter le serveur."); } finally { setSaving(false); } }
+  async function deleteReservation(item: Reservation) { if (!window.confirm(`Supprimer la réservation « ${item.campaignName} » ?`)) return; const response = await fetch(`${API}/reservations/${item.id}`, { method: "DELETE", credentials: "same-origin" }); const data = await response.json(); if (!response.ok) { setMessage(data.error ?? "Suppression impossible."); return; } setDetail(null); await fetchReservations(); setMessage("Réservation supprimée."); }
 
-    const data: Reservation[] = await response.json();
-    setReservations(data);
-  }
+  const weekStart = mondayOf(selectedDate); const weekDates = useMemo(() => Array.from({ length: 7 }, (_, i) => addDays(weekStart, i)), [weekStart]);
+  const myReservations = user ? reservations.filter((r) => Number(r.ownerUserId) === user.id).length : 0;
+  function movePeriod(direction: number) { setSelectedDate(addDays(selectedDate, direction * (view === "day" ? 1 : 7))); }
+  function changeView(next: "day" | "week") { setView(next); if (next === "week") setSelectedDate(mondayOf(selectedDate)); }
 
-  useEffect(() => {
-    async function loadData() {
-      try {
-        const response = await fetch(`${import.meta.env.BASE_URL}api/machines`);
+  if (loading) return <main className="loading-screen"><div className="loader"/><p>Préparation de votre espace laboratoire…</p></main>;
+  if (!user) return <main className="auth-screen"><div className="auth-decoration"><span className="orb orb-one"/><span className="orb orb-two"/><div className="auth-brand"><div className="brand-mark">L<span>+</span></div><p>LAB<span>FLOW</span></p></div><div className="auth-intro"><span className="eyebrow">LABORATOIRE · ÉQUIPEMENTS</span><h1>Le laboratoire,<br/><em>en mouvement.</em></h1><p>Un espace partagé pour organiser les essais, suivre les campagnes et réserver les équipements simplement.</p><div className="auth-stat"><strong>7</strong><span>équipements<br/>à votre disposition</span></div></div><div className="auth-bottom">PLANNING PARTAGÉ · RÉSERVATIONS SÉCURISÉES</div></div><section className="auth-card"><div className="auth-card-inner"><div className="mobile-brand">LAB<span>FLOW</span></div><span className="eyebrow">VOTRE ESPACE DE TRAVAIL</span><h2>{authMode === "login" ? "Bon retour." : "Créer un compte."}</h2><p className="auth-subtitle">{authMode === "login" ? "Connectez-vous pour accéder au planning du laboratoire." : "Rejoignez l'espace de réservation de votre équipe."}</p><form onSubmit={authenticate} className="auth-form"><label>Identifiant<input autoComplete="username" value={username} onChange={(e) => setUsername(e.target.value)} placeholder="ex. candice.dt" required minLength={3}/></label>{authMode === "register" && <label>Nom affiché<input autoComplete="name" value={displayName} onChange={(e) => setDisplayName(e.target.value)} placeholder="Prénom Nom" required minLength={2}/></label>}<label>Mot de passe<input type="password" autoComplete={authMode === "login" ? "current-password" : "new-password"} value={password} onChange={(e) => setPassword(e.target.value)} placeholder="10 caractères minimum" required minLength={10}/></label>{authMessage && <p className="form-message error">{authMessage}</p>}<button className="button button-primary auth-submit" disabled={authLoading}>{authLoading ? "Veuillez patienter…" : authMode === "login" ? "Se connecter" : "Créer mon compte"}<span>↗</span></button></form><p className="auth-switch">{authMode === "login" ? "Pas encore de compte ?" : "Vous avez déjà un compte ?"} <button onClick={() => { setAuthMode(authMode === "login" ? "register" : "login"); setAuthMessage(""); }}> {authMode === "login" ? "Créer un compte" : "Se connecter"}</button></p><p className="security-note"><span>●</span> Connexion sécurisée · Mot de passe chiffré</p></div></section></main>;
 
-        if (!response.ok) {
-          throw new Error("Impossible de récupérer les machines.");
-        }
+  return <main className="app-shell"><aside className="sidebar"><div className="sidebar-brand"><div className="brand-mark">L<span>+</span></div><div><strong>LAB<span>FLOW</span></strong><small>GESTION DU LABORATOIRE</small></div></div><div className="sidebar-label">ESPACE DE TRAVAIL</div><button className="nav-item active"><span className="nav-icon">▦</span> Planning <span className="nav-count">{reservations.length}</span></button><a className="nav-item" href="#machines"><span className="nav-icon">▤</span> Équipements</a><div className="sidebar-spacer"/><div className="sidebar-tip"><div className="tip-icon">✳</div><strong>Un essai à planifier ?</strong><p>Réservez un équipement et partagez votre campagne avec l'équipe.</p><button onClick={() => startCreate()}>Nouvelle réservation <span>↗</span></button></div><div className="sidebar-user"><div className="avatar" style={{ background: colorFor(user.username) }}>{user.displayName.slice(0, 1).toUpperCase()}</div><div className="user-meta"><strong>{user.displayName}</strong><small>@{user.username}</small></div><button className="logout-button" onClick={logout} title="Se déconnecter">↗</button></div></aside>
+    <section className="main-content"><header className="topbar"><div><span className="breadcrumb">Laboratoire <b>/</b> <strong>Planning général</strong></span><div className="mobile-greeting">Bonjour, {user.displayName.split(" ")[0]}</div></div><div className="topbar-actions"><span className="online-indicator"><i/> Espace partagé</span><button className="button button-primary" onClick={() => startCreate()}>＋ <span>Réserver une machine</span></button></div></header>
+    <div className="content-wrap"><section className="welcome-row"><div><div className="eyebrow">VUE D'ENSEMBLE · {prettyDate(selectedDate, { month: "long", year: "numeric" }).toUpperCase()}</div><h1>Planning des <em>équipements.</em></h1><p>Visualisez les disponibilités et coordonnez les campagnes d'essais.</p></div><div className="welcome-stats"><div><strong>{machines.length.toString().padStart(2, "0")}</strong><span>Équipements</span></div><div><strong>{reservations.length.toString().padStart(2, "0")}</strong><span>Réservations</span></div><div><strong>{myReservations.toString().padStart(2, "0")}</strong><span>Mes créneaux</span></div></div></section>
+    <section className="planning-panel"><div className="planning-heading"><div><span className="section-kicker">ORGANISATION</span><h2>Calendrier des réservations</h2><p>Les réservations sont visibles par toute l'équipe.</p></div><div className="view-switch"><button className={view === "day" ? "selected" : ""} onClick={() => changeView("day")}>Jour</button><button className={view === "week" ? "selected" : ""} onClick={() => changeView("week")}>Semaine</button></div></div><div className="calendar-toolbar"><div className="date-navigation"><button onClick={() => movePeriod(-1)} aria-label="Période précédente">‹</button><button onClick={() => setSelectedDate(localDate(new Date()))}>Aujourd'hui</button><button onClick={() => movePeriod(1)} aria-label="Période suivante">›</button><strong>{view === "day" ? prettyDate(selectedDate) : `${prettyDate(weekDates[0], { day: "numeric", month: "short" })} — ${prettyDate(weekDates[6], { day: "numeric", month: "short", year: "numeric" })}`}</strong></div><div className="calendar-legend"><span><i className="legend-mine"/> Mes réservations</span><span><i className="legend-other"/> Équipe</span></div></div>
+    {view === "day" ? <div className="gantt-scroll"><div className="gantt-grid"><div className="gantt-head machine-head">ÉQUIPEMENT</div><div className="gantt-head time-head">{HOURS.map((h) => <span key={h}>{String(h).padStart(2, "0")}:00</span>)}</div>{machines.map((machine) => <div className="gantt-row-wrap" key={machine.id}><div className="gantt-machine"><span className="machine-dot" /><strong>{machine.name}</strong><small>{reservations.filter((r) => Number(r.machineId) === machine.id && r.date === selectedDate).length} réservation(s)</small></div><div className="gantt-track">{HOURS.map((h) => <i className="hour-line" key={h}/>)}{reservations.filter((r) => Number(r.machineId) === machine.id && r.date === selectedDate).map((r) => { const left = Math.max(0, (toMinutes(r.start) - 420) / 780 * 100); const width = Math.max(1.5, (toMinutes(r.end) - toMinutes(r.start)) / 780 * 100); const mine = Number(r.ownerUserId) === user.id; return <button key={r.id} className={`gantt-booking ${mine ? "mine" : "other"}`} style={{ left: `${left}%`, width: `${Math.min(width, 100 - left)}%`, "--booking-color": colorFor(r.ownerDisplayName || r.reservedBy) } as CSSProperties} onClick={() => setDetail(r)} title={`${r.campaignName} · ${r.start}–${r.end} · ${r.ownerDisplayName || r.reservedBy}`}><strong>{r.campaignName}</strong><span>{r.start}–{r.end}</span></button>; })}</div></div>)}</div></div> : <div className="week-grid-wrap"><div className="week-grid"><div className="week-corner">ÉQUIPEMENT</div>{weekDates.map((day) => <button key={day} className={`week-day-head ${day === selectedDate ? "today" : ""}`} onClick={() => { setSelectedDate(day); setView("day"); }}><small>{prettyDate(day, { weekday: "short" }).toUpperCase()}</small><strong>{parseDate(day).getDate()}</strong></button>)}{machines.map((machine) => <div className="week-machine-row" key={machine.id}><div className="week-machine-name"><i/>{machine.name}</div>{weekDates.map((day) => <div className="week-cell" key={day} onClick={() => { setSelectedDate(day); setDraft(emptyDraft(String(machine.id), day)); }}><button className="week-add" onClick={(e) => { e.stopPropagation(); startCreate(String(machine.id), day); }}>+</button>{reservations.filter((r) => Number(r.machineId) === machine.id && r.date === day).map((r) => <button key={r.id} className={`week-booking ${Number(r.ownerUserId) === user.id ? "mine" : "other"}`} style={{ "--booking-color": colorFor(r.ownerDisplayName || r.reservedBy) } as CSSProperties} onClick={(e) => { e.stopPropagation(); setDetail(r); }}><b>{r.start}–{r.end}</b><span>{r.campaignName}</span><small>{r.ownerDisplayName || r.reservedBy}</small></button>)}</div>)}</div>)}</div></div>}
+    <div className="planning-foot"><span><i/> Les créneaux sont protégés contre les chevauchements.</span><span>Fuseau horaire : Europe/Paris</span></div></section>
 
-        const data: Machine[] = await response.json();
+    {showForm && <section className="booking-panel" id="booking-form"><div className="booking-heading"><div><span className="section-kicker">{editingId ? "MODIFICATION" : "NOUVEAU CRÉNEAU"}</span><h2>{editingId ? "Modifier la réservation" : "Planifier un essai"}</h2></div><button className="close-button" onClick={() => { setShowForm(false); setEditingId(null); }}>×</button></div><form className="booking-form" onSubmit={saveReservation}><label className="field-wide">Campagne d'essais<input value={draft.campaignName} onChange={(e) => setDraft({ ...draft, campaignName: e.target.value })} placeholder="Ex. Validation semelle V2" required minLength={2} maxLength={100}/></label><label>Équipement<select value={draft.machineId} onChange={(e) => setDraft({ ...draft, machineId: e.target.value })} required>{machines.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}</select></label><label>Nombre d'échantillons<input type="number" min="1" max="100000" value={draft.sampleCount} onChange={(e) => setDraft({ ...draft, sampleCount: e.target.value })} required/></label><label>Date<input type="date" value={draft.date} onChange={(e) => setDraft({ ...draft, date: e.target.value })} required/></label><label>Début<input type="time" value={draft.start} onChange={(e) => setDraft({ ...draft, start: e.target.value })} required/></label><label>Fin<input type="time" value={draft.end} onChange={(e) => setDraft({ ...draft, end: e.target.value })} required/></label><div className="booking-actions"><span>Réservation au nom de <strong>{user.displayName}</strong></span><button className="button button-primary" disabled={saving}>{saving ? "Enregistrement…" : editingId ? "Enregistrer les modifications" : "Confirmer la réservation"}</button></div></form></section>}
+    {message && <div className={`toast ${message.toLowerCase().includes("impossible") || message.toLowerCase().includes("erreur") || message.toLowerCase().includes("déjà") ? "toast-error" : "toast-success"}`} role="status">{message}<button onClick={() => setMessage("")}>×</button></div>}
 
-        const loadedMachines = data.map((machine) => ({
-          ...machine,
-          id: Number(machine.id),
-        }));
-
-        setMachines(loadedMachines);
-
-        if (loadedMachines.length > 0) {
-          setMachineId(String(loadedMachines[0].id));
-        }
-
-        await fetchReservations();
-      } catch (error) {
-        console.error(error);
-        setMessage(
-          "Impossible de charger les données. Vérifie que le backend Express fonctionne."
-        );
-      } finally {
-        setLoadingMachines(false);
-      }
-    }
-
-    loadData();
-  }, []);
-
-  async function bookMachine(
-    event: React.FormEvent<HTMLFormElement>
-  ) {
-    event.preventDefault();
-    setMessage("");
-
-    if (start >= end) {
-      setMessage("L'heure de fin doit être après l'heure de début.");
-      return;
-    }
-
-    try {
-      const response = await fetch(`${import.meta.env.BASE_URL}api/reservations`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          machineId: Number(machineId),
-          date,
-          start,
-          end,
-          reservedBy,
-        }),
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        setMessage(
-          data.error ?? "Impossible d'enregistrer la réservation."
-        );
-        return;
-      }
-
-      await fetchReservations();
-      setMessage("Réservation ajoutée avec succès !");
-      setReservedBy("");
-    } catch (error) {
-      console.error(error);
-      setMessage("Impossible de contacter le serveur. Réessaie.");
-    }
-  }
-
-  return (
-    <main className="page">
-      <div className="container">
-        <header className="page-header">
-          <p className="eyebrow">
-            Laboratoire · Gestion des équipements
-          </p>
-          <h1>Réservation des machines</h1>
-          <p className="subtitle">
-            Consultez les équipements et réservez un créneau disponible.
-          </p>
-        </header>
-
-        <section className="section">
-          <h2>Machines disponibles</h2>
-
-          {loadingMachines && <p>Chargement des machines...</p>}
-
-          <div className="machine-grid">
-            {machines.map((machine) => (
-              <article className="machine-card" key={machine.id}>
-                <div className="machine-card-top">
-                  <span className="muted">
-                    Équipement {String(machine.id).padStart(2, "0")}
-                  </span>
-                  <span className="status">Actif</span>
-                </div>
-
-                <h3>{machine.name}</h3>
-                <p className="description">
-                  {machine.description ?? "Aucune description"}
-                </p>
-
-                <button
-                  type="button"
-                  className="text-button"
-                  onClick={() => {
-                    setMachineId(String(machine.id));
-                    document
-                      .getElementById("reservation")
-                      ?.scrollIntoView({ behavior: "smooth" });
-                  }}
-                >
-                  Réserver cette machine →
-                </button>
-              </article>
-            ))}
-          </div>
-        </section>
-
-        <section className="panel section" id="reservation">
-          <h2>Nouvelle réservation</h2>
-
-          <form className="reservation-form" onSubmit={bookMachine}>
-            <label>
-              Nom du réservataire
-              <input
-                type="text"
-                required
-                value={reservedBy}
-                onChange={(event) => setReservedBy(event.target.value)}
-                placeholder="Prénom et nom"
-              />
-            </label>
-
-            <label>
-              Machine
-              <select
-                required
-                value={machineId}
-                onChange={(event) => setMachineId(event.target.value)}
-              >
-                {machines.map((machine) => (
-                  <option key={machine.id} value={machine.id}>
-                    {machine.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <label>
-              Date
-              <input
-                type="date"
-                required
-                value={date}
-                onChange={(event) => setDate(event.target.value)}
-              />
-            </label>
-
-            <label>
-              Heure de début
-              <input
-                type="time"
-                required
-                value={start}
-                onChange={(event) => setStart(event.target.value)}
-              />
-            </label>
-
-            <label>
-              Heure de fin
-              <input
-                type="time"
-                required
-                value={end}
-                onChange={(event) => setEnd(event.target.value)}
-              />
-            </label>
-
-            <button
-              type="submit"
-              className="primary-button"
-              disabled={loadingMachines || machines.length === 0}
-            >
-              Confirmer la réservation
-            </button>
-          </form>
-
-          {message && (
-            <p
-              role="status"
-              className={`message ${
-                message.includes("succès") ? "success" : "error"
-              }`}
-            >
-              {message}
-            </p>
-          )}
-        </section>
-
-        <section className="section">
-          <h2>Réservations enregistrées</h2>
-
-          <div className="table-wrapper">
-            <table>
-              <thead>
-                <tr>
-                  <th>Machine</th>
-                  <th>Réservé par</th>
-                  <th>Date</th>
-                  <th>Créneau</th>
-                </tr>
-              </thead>
-              <tbody>
-                {reservations.map((reservation) => (
-                  <tr key={reservation.id}>
-                    <td>{reservation.machineName}</td>
-                    <td>{reservation.reservedBy}</td>
-                    <td>{reservation.date}</td>
-                    <td>
-                      {reservation.start} – {reservation.end}
-                    </td>
-                  </tr>
-                ))}
-
-                {reservations.length === 0 && (
-                  <tr>
-                    <td colSpan={4} className="empty-state">
-                      Aucune réservation pour le moment.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </section>
-
-        <p className="footer-note">
-          Les réservations sont enregistrées dans la base PostgreSQL.
-        </p>
-      </div>
-    </main>
-  );
+    <section className="machines-section" id="machines"><div className="section-title-row"><div><span className="section-kicker">PARC MATÉRIEL</span><h2>Les équipements du laboratoire</h2><p>Accédez rapidement à la réservation de chaque équipement.</p></div><span className="machine-total">{machines.length} ÉQUIPEMENTS</span></div><div className="equipment-grid">{machines.map((machine, index) => <article className="equipment-card" key={machine.id}><div className="equipment-image" style={{ backgroundImage: `linear-gradient(180deg, transparent 35%, rgba(12,25,38,.55)), url("${MACHINE_IMAGES[index % MACHINE_IMAGES.length]}")` }}><span>ÉQUIPEMENT {String(index + 1).padStart(2, "0")}</span><button onClick={() => startCreate(String(machine.id))}>＋</button></div><div className="equipment-info"><h3>{machine.name}</h3><p>{machine.description || "Description à compléter."}</p><button onClick={() => startCreate(String(machine.id))}>Réserver cet équipement <span>↗</span></button></div></article>)}</div></section>
+    <footer className="app-footer"><span>LABFLOW · OUTIL DE GESTION DES ESSAIS</span><span>Les réservations sont synchronisées en temps réel à chaque actualisation.</span></footer></div></section>
+    {detail && <div className="modal-backdrop" onClick={() => setDetail(null)}><section className="detail-modal" onClick={(e) => e.stopPropagation()}><button className="close-button modal-close" onClick={() => setDetail(null)}>×</button><span className="section-kicker">DÉTAIL DE LA RÉSERVATION</span><h2>{detail.campaignName}</h2><div className="detail-owner"><i style={{ background: colorFor(detail.ownerDisplayName || detail.reservedBy) }}/>{detail.ownerDisplayName || detail.reservedBy}</div><div className="detail-list"><div><small>Équipement</small><strong>{detail.machineName}</strong></div><div><small>Date</small><strong>{prettyDate(detail.date)}</strong></div><div><small>Horaires</small><strong>{detail.start} — {detail.end}</strong></div><div><small>Échantillons</small><strong>{detail.sampleCount}</strong></div></div>{Number(detail.ownerUserId) === user.id ? <div className="detail-actions"><button className="button button-secondary" onClick={() => startEdit(detail)}>Modifier</button><button className="button button-danger" onClick={() => deleteReservation(detail)}>Supprimer</button></div> : <p className="readonly-note">Cette réservation appartient à un autre membre de l'équipe. Vous pouvez la consulter, mais pas la modifier.</p>}</section></div>}
+  </main>;
 }
-
 export default App;
